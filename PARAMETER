@@ -1,0 +1,4 @@
+       PARAMETER (N=23)
+       PARAMETER (nadd=6)
+       PARAMETER (new=20)
+       PARAMETER (ntemp=16)	

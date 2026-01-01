@@ -1,0 +1,444 @@
+      PROGRAM NCA
+      IMPLICIT REAL*8 (a-h,o-y)
+      CHARACTER(len=4) check 
+      INTEGER nspin
+      INTEGER N,nadd,naux,ngrid !Grid parameters, ngrid=#gridpoints
+      INTEGER nNeu,new,ninter,ntemp
+      INCLUDE 'PARAMETER' 
+c      PARAMETER (naux=N+(N-1)*nadd,ngrid=2*naux)
+      PARAMETER (naux=N+(N-1)*nadd,nNeu=2*naux)
+      PARAMETER (ninter=nNeu+4*new)
+      PARAMETER(ngrid=ninter+4*ntemp)
+      PARAMETER (nspin=2)
+      INTEGER i,j,k,l
+      INTEGER iterate,maxiterate
+      INTEGER number
+      DOUBLE PRECISION pi,xdelta
+      PARAMETER(pi=3.1415926535898d0)
+      PARAMETER(xdelta=1.0d-12)
+      DOUBLE PRECISION temp,beta,D,hybrid,eps,xupdt
+      DOUBLE PRECISION Gamma    !grid parameter
+      DOUBLE PRECISION badgam0,badcut0,badbeta0,bdgm,bdct,bdbet,xhlp,pref
+      DOUBLE PRECISION delta,x,xxx,xx0,xtol
+      DOUBLE PRECISION omega(ngrid)
+      DOUBLE PRECISION sefp(ngrid),sefm(ngrid),afp(ngrid),afm(ngrid),
+     &     gfr(ngrid),sefr(ngrid),sefmnew(ngrid),sefpnew(ngrid),
+     &     sefmold(ngrid),sefpold(ngrid),afold(ngrid)
+      DOUBLE PRECISION sebp(ngrid),sebm(ngrid),abp(ngrid),abm(ngrid),
+     &     gbr(ngrid),sebr(ngrid),sebmnew(ngrid),sebpnew(ngrid),
+     &     sebmold(ngrid),sebpold(ngrid),abold(ngrid)
+      DOUBLE PRECISION seup(ngrid),seum(ngrid),aup(ngrid),aum(ngrid),
+     &     gur(ngrid),seur(ngrid),seumnew(ngrid),seupnew(ngrid),Urep,
+     &     seupold(ngrid),seumold(ngrid),auold(ngrid),
+     &     ad3(ngrid),ad4(ngrid)
+      DOUBLE PRECISION rexp(ngrid/2), ad1(ngrid),ad2(ngrid),ad(ngrid)
+      DOUBLE PRECISION scr(ngrid/2),aux(ngrid)
+      DOUBLE PRECISION suszi(ngrid),resus(ngrid)
+      DOUBLE PRECISION omegan(nNeu),omegat(ninter),templist(100)
+      DOUBLE PRECISION doslist(100)
+      EXTERNAL ferm0,gammaf,cspec,aphi
+      CHARACTER*7 handle
+      CHARACTER*11 name1,name2
+      CHARACTER*15 name3
+      COMMON /versuch/bdgm,bdct,bdbet,pref,xhlp
+**********************READ IN PARAMETERS********************************
+      OPEN(UNIT=14,FILE='PARAMETER.dat',STATUS='UNKNOWN')
+      READ(14,*) temp,D,eps,hybrid,RG,Urep
+      READ(14,*) Gamma
+      READ(14,*) maxiterate,xtol,xupdt0
+      READ(14,*) badgam0,badcut0,badbeta0
+      beta=1/temp
+      xupdt=xupdt0
+      bdgm=badgam0
+      bdct=badcut0
+      bdbet=badbeta0
+      xhlp=badcut0**badgam0
+      pref=1.0d0/gammaf(1.0d0+bdgm)
+      CLOSE(14)
+      OPEN(UNIT=15,FILE='RESULTS.dat',STATUS='UNKNOWN')
+      READ(15,*) rlambd0
+      CLOSE(15)
+************************************************************************ 
+      OPEN(UNIT=20,FILE='TEMPLIST.dat',STATUS='UNKNOWN')
+      k=0
+      DO i=1,100
+         READ(20,*,END=99) temp
+         templist(i)=temp
+         k=k+1
+      END DO
+ 99   CONTINUE
+      number=k
+      
+*************************************
+      OPEN(UNIT=66,FILE='STATSUS.dat',STATUS='UNKNOWN')
+      OPEN(unit=89,FILE='Convergence.dat',STATUS='unknown') 
+      DO lkm=1,number
+      check='nein'
+      temp=templist(lkm)
+*************************************
+      beta=1/temp
+*************************************
+      WRITE(handle,'(E7.2)') temp
+      name2='abp_'//handle
+      name1='afp_'//handle
+      OPEN(UNIT=91,FILE=name1,STATUS='UNKNOWN')
+      OPEN(UNIT=92,FILE=name2,STATUS='UNKNOWN')
+      name2='abm_'//handle
+      name1='afm_'//handle
+      OPEN(UNIT=93,FILE=name1,STATUS='UNKNOWN')
+      OPEN(UNIT=94,FILE=name2,STATUS='UNKNOWN')
+      name3='rlambda_'//handle
+      OPEN(UNIT=95,FILE=name3,STATUS='UNKNOWN')
+      name2='aum_'//handle
+      name1='aup_'//handle
+      OPEN(UNIT=96,FILE=name1,STATUS='UNKNOWN')
+      OPEN(UNIT=97,FILE=name2,STATUS='UNKNOWN')
+********************build frequency grid omega**************************
+      CALL GRID(Gamma,N,Nadd,naux,nNeu,omegan)
+      CALL RENORM(D,nNeu,omegan)
+      cutoff=badcut0
+      width=badcut0/10.0d0
+      CALL XRAPOINTS(omegan,nNeu,cutoff,width,new,omegat,ninter)
+      pos=temp/2.0
+      width=temp/3.5
+      CALL XRAPOINTS(omegat,ninter,pos,width,ntemp,omega,ngrid)
+      up=1.8d0
+      down=-1.8d0
+      CALL LOCATE(omega,ngrid,up,nup)
+      CALL LOCATE(omega,ngrid,down,ndown)
+************************************************************************
+*************************initialize functions***************************
+      CALL READIN(sefpold,sefmold,sebpold,sebmold,seupold,seumold,
+     &     omega,ngrid)
+
+      CALL KRAKRO(ngrid,omega,sefpold,sefr) !real part of selfenergies
+      CALL KRAKRO(ngrid,omega,sebpold,sebr) !real part of selfenergies
+      CALL KRAKRO(ngrid,omega,seupold,seur) !real part of selfenergies
+      DO i=1,ngrid/2
+         rexp(i)=dexp(beta*omega(i))
+      END DO
+************************************************************************
+      DO i=1,ngrid/2
+         k=i+ngrid/2
+         afm(i)=sefmold(i)/
+     &        ((omega(i)-eps+rlambd0-sefr(i))**2+sefpold(i)**2)
+         afp(k)=sefpold(k)/
+     &          ((omega(k)-eps+rlambd0-sefr(k))**2+sefpold(k)**2)
+         abm(i)=sebmold(i)/
+     &          ((omega(i)+rlambd0-sebr(i))**2+sebpold(i)**2)
+         abp(k)=sebpold(k)/
+     &          ((omega(k)+rlambd0-sebr(k))**2+sebpold(k)**2)
+         aum(i)=seumold(i)/
+     &       ((omega(i)-2.0*eps-Urep+rlambd0-seur(i))**2+seupold(i)**2)
+         aup(k)=seupold(k)/
+     &       ((omega(k)-2.0*eps-Urep+rlambd0-seur(k))**2+seupold(k)**2)   
+         afp(i)=rexp(i)*afm(i)
+         abp(i)=rexp(i)*abm(i)
+         afm(k)=rexp(ngrid/2-i+1)*afp(k)
+         abm(k)=rexp(ngrid/2-i+1)*abp(k)
+         aup(i)=rexp(i)*aum(i)
+         aum(k)=rexp(ngrid/2-i+1)*aup(k)
+      END DO
+************************************************************************
+     
+******************get DoS and Fermi function****************************
+      CALL DOSINTERPOL
+      CALL FERMIFUNC0
+      CALL BOSEFUNC0(omega,temp)
+      CALL BADINTERPOL
+      OPEN(unit=18,FILE='bosBath.dat',STATUS='unknown')
+      DO i=1,ngrid
+         WRITE(18,*) omega(i),aphi(omega(i))
+      END DO
+      CLOSE(18)
+      
+
+************************************************************************
+************************************************************************
+**********************START ITERATION***********************************
+************************************************************************
+************************************************************************
+      DO iterate=1,maxiterate
+************************************************************************
+         CALL SELFENERGIES(beta,hybrid,RG,omega,ngrid,rexp,abm,abp,afm,
+     &     afp,aum,aup,sefmnew,sefpnew,sebmnew,sebpnew,seumnew,seupnew)
+
+***********************update selfenergies******************************
+         CALL UPTDATE(ngrid,xupdt,sefpnew,sefpold,sefp)
+         CALL UPTDATE(ngrid,xupdt,sefmnew,sefmold,sefm)
+         CALL UPTDATE(ngrid,xupdt,sebpnew,sebpold,sebp)
+         CALL UPTDATE(ngrid,xupdt,sebmnew,sebmold,sebm)
+         CALL UPTDATE(ngrid,xupdt,seupnew,seupold,seup)
+         CALL UPTDATE(ngrid,xupdt,seumnew,seumold,seum)
+         DO i=1,ngrid
+            afold(i)=afp(i)
+            abold(i)=abp(i)
+            auold(i)=aup(i)
+         END DO
+
+         CALL KRAKRO(ngrid,omega,sefp,sefr) !real part of selfenergies
+         CALL KRAKRO(ngrid,omega,sebp,sebr) !real part of selfenergies
+         CALL KRAKRO(ngrid,omega,seup,seur) !real part of selfenergies
+******************calculate rlambda0 update*****************************
+         rlambold=rlambd0
+         CALL RUPDATE(rexp,sefp,sefm,sefr,sebp,sebm,sebr,seup,seum,seur,
+     +        omega,beta,eps,Urep,rlambd0,delta)
+c         CALL SHIFT(delta,omega,ngrid,sefp,sefm,sefr,sebp,sebm,sebr)
+
+
+************************************************************************
+****************calculate new spectral functions************************
+         DO i=1,ngrid/2
+            k=i+ngrid/2
+            afm(i)=sefm(i)/
+     &           ((omega(i)-eps+rlambd0-sefr(i))**2+sefp(i)**2)
+            afp(k)=sefp(k)/
+     &           ((omega(k)-eps+rlambd0-sefr(k))**2+sefp(k)**2)
+            abm(i)=sebm(i)/
+     &           ((omega(i)+rlambd0-sebr(i))**2+sebp(i)**2)
+            abp(k)=sebp(k)/
+     &           ((omega(k)+rlambd0-sebr(k))**2+sebp(k)**2)
+            aum(i)=seum(i)/
+     &       ((omega(i)-2.0*eps-Urep+rlambd0-seur(i))**2+seup(i)**2)
+            aup(k)=seup(k)/
+     &       ((omega(k)-2.0*eps-Urep+rlambd0-seur(k))**2+seup(k)**2)
+            afp(i)=rexp(i)*afm(i)
+            abp(i)=rexp(i)*abm(i)
+            afm(k)=rexp(ngrid/2-i+1)*afp(k)
+            abm(k)=rexp(ngrid/2-i+1)*abp(k)
+            aup(i)=rexp(i)*aum(i)
+            aum(k)=rexp(ngrid/2-i+1)*aup(k)
+         END DO
+         
+**********
+         CALL ROUT('ufp.dat',ngrid,omega,afp)
+         CALL ROUT('ufm.dat',ngrid,omega,afm)
+         CALL ROUT('ubp.dat',ngrid,omega,abp)
+         CALL ROUT('ubm.dat',ngrid,omega,abm)
+         CALL ROUT('uup.dat',ngrid,omega,aup)
+         CALL ROUT('uum.dat',ngrid,omega,aum)
+c         DO i=1,ngrid-1
+c            xxx=xxx+0.5d0*(omega(i+1)-omega(i))*(afm(i+1)+afm(i))
+c         END DO
+c         xxx=2.0*xxx
+c         DO i=1,ngrid-1
+c            xxx=xxx+0.5d0*(omega(i+1)-omega(i))*(abm(i+1)+abm(i))
+c         END DO
+c         print*,'weight2: ',xxx
+c         STOP
+**********
+c         CALL KRAKRO(ngrid,omega,afp,gfr) !real part of GF
+c         CALL KRAKRO(ngrid,omega,abp,gbr) !real part of GF
+c         CALL ROUT('afp.dat',ngrid,omega,afp)
+c         CALL ROUT('afm.dat',ngrid,omega,afm)
+c         CALL ROUT('abp.dat',ngrid,omega,abp)
+c         CALL ROUT('abm.dat',ngrid,omega,abm)
+c         CALL ROUT('sebm.dat',ngrid,omega,sebm)
+c         CALL ROUT('sebp.dat',ngrid,omega,sebp)
+c         CALL ROUT('sefp.dat',ngrid,omega,sefp)
+c         CALL ROUT('sefm.dat',ngrid,omega,sefm)
+c         OPEN(UNIT=15,FILE='result.dat',STATUS='UNKNOWN')
+c         WRITE(15,*) rlambd0
+c         CLOSE(15)
+************************************************************************
+         DO i=1,ngrid
+            aux(i)=afp(i)+afm(i)
+         END DO
+         CALL PN(delta,beta,ngrid,omega,aux,rnf)
+         DO i=1,ngrid
+            aux(i)=abp(i)+abm(i)
+         END DO
+         CALL PN(delta,beta,ngrid,omega,aux,rnb)
+          DO i=1,ngrid
+            aux(i)=aup(i)+aum(i)
+         END DO
+         CALL PN(delta,beta,ngrid,omega,aux,rnu)
+********************CHECK for CONVERGENCE*******************************
+         xx0=0.0d0
+         DO i=ndown,nup
+            xxx=dabs(afp(i)-afold(i))/(afp(i)+1.0d-35)
+            IF(xxx.GT.xx0) xx0=xxx
+            xxx=dabs(abp(i)-abold(i))/(abp(i)+1.0d-35)
+            IF(xxx.GT.xx0) xx0=xxx
+            xxx=dabs(aup(i)-auold(i))/(aup(i)+1.0d-35)
+            IF(xxx.GT.xx0) xx0=xxx
+         END DO
+         print*,'------------------------'
+         print*,'ITERATION ',iterate
+         print*,'overall change= ',xx0
+         print*,'constraint=      ',2.0*rnf+rnb+rnu
+         print*,'Besetzung=      ',2.0*rnf+2.0*rnu
+         print*,'------------------------'
+         OPEN(UNIT=16,FILE='iterat.dat',STATUS='UNKNOWN')
+         WRITE(16,*)  'ITERATION ',iterate
+         WRITE(16,*)  'overall change= ',xx0 
+         WRITE(16,*)  'TEMP: ',temp  
+         CLOSE(16)
+         IF(xx0.LT.xtol) THEN
+            check='ja'
+            WRITE(89,*) temp,iterate, 'converged'
+            print*,'converged',temp,iterate
+            GOTO 300
+         ENDIF
+c         IF(xx0.GT.1.0) THEN
+c            xupdt=0.2d0
+c            ELSEIF(xx0.GT.0.1) THEN
+c               xupdt=0.1d0
+c            ELSEIF(xx0.GT.0.01) THEN
+c               xupdt=5.0*xupdt0
+c            ELSEIF(xx0.GT.0.001) THEN
+c               xupdt=xupdt0
+c            ELSEIF(xx0.GT.5*xtol) THEN
+c               xupdt=0.7*xupdt0
+c            ELSE
+c               xupdt=0.5*xupdt0
+c            ENDIF
+      END DO
+      
+ 300  CONTINUE
+
+      write(88,*) 'converged',iterate,xxx,xtol
+ 
+*******************************************************************
+
+           DO i=1,ngrid
+                 WRITE(91,*) omega(i),afp(i),temp,RG
+                 WRITE(92,*) omega(i),abp(i),temp,RG
+                 WRITE(93,*) omega(i),afm(i),temp,RG
+                 WRITE(94,*) omega(i),abm(i),temp,RG
+                 WRITE(96,*) omega(i),aup(i),temp,RG
+                 WRITE(97,*) omega(i),aum(i),temp,RG
+           END DO
+           WRITE(95,*) rlambd0
+           CLOSE(91)
+           CLOSE(92)
+           CLOSE(93)
+           CLOSE(94)
+           CLOSE(95)
+           CLOSE(96)
+           CLOSE(97)
+
+ 
+*******************************************************************
+      
+      CALL ROUT('SEBM.dat',ngrid,omega,sebm)
+      CALL ROUT('SEBP.dat',ngrid,omega,sebp)
+      CALL ROUT('SEFP.dat',ngrid,omega,sefp)
+      CALL ROUT('SEFM.dat',ngrid,omega,sefm)
+      CALL ROUT('SEUP.dat',ngrid,omega,seup)
+      CALL ROUT('SEUM.dat',ngrid,omega,seum)
+      OPEN(UNIT=15,FILE='RESULTS.dat',STATUS='UNKNOWN')
+      WRITE(15,*) rlambd0
+      CLOSE(15)
+      CALL BUBBLE(omega,ngrid,afp,abm,ad1)
+      CALL BUBBLE(omega,ngrid,afm,abp,ad2)
+      CALL BUBBLE(omega,ngrid,aup,afm,ad3)
+      CALL BUBBLE(omega,ngrid,aum,afp,ad4)
+      DO i=1,ngrid
+         ad(i)=ad1(i)+ad2(i)+ad3(i)+ad4(i)
+      END DO
+      OPEN(UNIT=19,FILE='dos.dat'//handle,STATUS='UNKNOWN')
+      DO i=1,ngrid
+         write(19,*) omega(i),ad(i)
+      END DO
+      CLOSE(19)
+      CALL LOCATE(omega,ngrid,0.0d0,m)
+         xxx=ad(m)+(ad(m+1)-ad(m))/(omega(m+1)-omega(m))
+     &     *(0.0d0-omega(m))
+         doslist(lkm)=hybrid*xxx
+***********************************************************************
+**************** calculate Spin Susceptibility ************************
+***********************************************************************
+c      CALL SUSCEPTIBILITY(beta,afp,afm,omega,ngrid,suszi)
+c      CALL DSCAL(ngrid,pi,suszi,1)
+c      CALL KRAKRO(ngrid,omega,suszi,resus)
+c      CALL ROUT('SUSZI.dat',ngrid,omega,suszi)
+c      CALL ROUT('RESUS.dat',ngrid,omega,resus)
+c      CALL LOCATE(omega,ngrid,0.0d0,m)
+c         xxx=resus(m)+(resus(m+1)-resus(m))/(omega(m+1)-omega(m))
+c     &           *(0.0d0-omega(m))
+
+
+
+      write(66,*) temp,-xxx,rnf,' ',check
+      END DO
+      CLOSE(97)
+      OPEN(UNIT=24,FILE='CONDUCTANCE.dat',STATUS='unknown')
+      DO i=1,number
+         write(24,*) tempList(i),dosList(i)
+      END DO
+      CLOSE(24)
+
+***********************************************************************
+         CLOSE(89)
+         CLOSE(66)
+***********************************************************************
+      STOP
+      END
+************************************************************************      
+************************************************************************
+      SUBROUTINE SELFENERGIES(beta,hybd,g,omega,n,rexp,abm,abp,afm,afp,
+     &       aum,aup,sefm,sefp,sebm,sebp,seum,seup)
+      IMPLICIT NONE
+      INTEGER n,nspin,i
+      PARAMETER(nspin=2)
+      DOUBLE PRECISION beta,hybd,g
+      DOUBLE PRECISION omega(n),rexp(n),abm(n),abp(n),afm(n),afp(n)
+      DOUBLE PRECISION sefm(n),sefp(n),sebm(n),sebp(n)
+      DOUBLE PRECISION aup(n),aum(n),seum(n),seup(n),sefum(n),sefup(n)
+      DOUBLE PRECISION sefmbad(n),sefpbad(n)
+      DOUBLE PRECISION seumbad(n),seupbad(n)
+      DOUBLE PRECISION pi
+
+      pi=4.0d0*DATAN(1.0d0)
+      CALL SIGMAF(beta,rexp,abm,abp,omega,n,sefm,sefp)
+      CALL SIGMAB(beta,rexp,afm,afp,omega,n,sebm,sebp)
+      CALL SGMAFU(beta,rexp,aum,aup,omega,n,sefum,sefup)
+      CALL SIGMAU(beta,rexp,afm,afp,omega,n,seum,seup)
+c      CALL ROUT('sefpbad.dat',n,omega,sefpbad)
+c      CALL ROUT('sefmbad.dat',n,omega,sefmbad)
+CCC
+      CALL SIGMAFa(beta,rexp,afm,afp,omega,n,sefmbad,sefpbad)
+      CALL DSCAL(n,g**2/pi,sefpbad,1)
+      CALL DSCAL(n,g**2/pi,sefmbad,1)
+c      CALL ROUT('sefpbad.dat',n,omega,sefpbad)
+c      CALL ROUT('sefmbad.dat',n,omega,sefmbad)
+CCC
+      CALL SIGMAUbath(beta,rexp,aum,aup,omega,n,seumbad,seupbad)
+      CALL DSCAL(n,4*g**2/pi,seupbad,1)
+      CALL DSCAL(n,4*g**2/pi,seumbad,1)
+c      CALL ROUT('seupbad.dat',n,omega,seupbad)
+c      CALL ROUT('seumbad.dat',n,omega,seumbad)
+CCC
+      CALL DSCAL(n,hybd/pi,sefp,1)
+      CALL DSCAL(n,hybd/pi,sefm,1)
+      CALL DSCAL(n,nspin*hybd/pi,sebp,1)
+      CALL DSCAL(n,nspin*hybd/pi,sebm,1)
+      CALL DSCAL(n,hybd/pi,sefup,1)
+      CALL DSCAL(n,hybd/pi,sefum,1)
+      CALL DSCAL(n,nspin*hybd/pi,seup,1)
+      CALL DSCAL(n,nspin*hybd/pi,seum,1)
+      DO i=1,n
+         sefm(i)=sefm(i)+sefmbad(i)+sefum(i)
+         sefp(i)=sefp(i)+sefpbad(i)+sefup(i)
+         seup(i)=seup(i)+seupbad(i)
+         seum(i)=seum(i)+seumbad(i)
+      END DO
+      
+      
+
+      RETURN
+      END
+************************************************************************      
+************************************************************************
+      SUBROUTINE UPTDATE(n,xupdt,new,old,back)
+      IMPLICIT NONE
+      INTEGER n,i
+      DOUBLE PRECISION xupdt,new(n),old(n),back(n)
+      DO i=1,n
+         back(i)=(xupdt*new(i)+old(i))/(1.0d0+xupdt)
+         old(i)=back(i)
+      END DO
+      
+      RETURN
+      END
